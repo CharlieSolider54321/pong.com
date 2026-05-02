@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PONG</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:#000;
+  color:#fff;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  height:100vh;
+  overflow:hidden;
+  user-select:none;
+}
+#ui-top{margin-bottom:12px;display:flex;align-items:center;justify-content:center;}
+#ui-bottom{margin-top:12px;display:flex;flex-direction:column;align-items:center;gap:8px;}
+#wrap{border:3px solid #fff;line-height:0;}
+canvas{display:block;}
+</style>
+</head>
+<body>
+<div id="ui-top"><canvas id="scoreCanvas" width="960" height="90"></canvas></div>
+<div id="wrap"><canvas id="c" width="960" height="620"></canvas></div>
+<div id="ui-bottom">
+  <canvas id="msgCanvas" width="960" height="30"></canvas>
+  <canvas id="hintCanvas" width="960" height="22"></canvas>
+</div>
+
+<script>
+// ---- AUDIO ----
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+
+function beep(freq, dur, type='square', vol=0.3) {
+  const osc = AC.createOscillator();
+  const gain = AC.createGain();
+  osc.connect(gain);
+  gain.connect(AC.destination);
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, AC.currentTime);
+  gain.gain.setValueAtTime(vol, AC.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+  osc.start(AC.currentTime);
+  osc.stop(AC.currentTime + dur);
+}
+
+function soundPaddle() { beep(480, 0.04); }
+function soundWall()   { beep(240, 0.04); }
+function soundScore()  { beep(110, 0.4, 'square', 0.4); }
+
+// ---- 5x3 PIXEL FONT ----
+// Each char: 5 rows x 3 cols bitmap
+const FONT = {
+  '0':[[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+  '1':[[0,1,0],[1,1,0],[0,1,0],[0,1,0],[1,1,1]],
+  '2':[[1,1,1],[0,0,1],[1,1,1],[1,0,0],[1,1,1]],
+  '3':[[1,1,1],[0,0,1],[0,1,1],[0,0,1],[1,1,1]],
+  '4':[[1,0,1],[1,0,1],[1,1,1],[0,0,1],[0,0,1]],
+  '5':[[1,1,1],[1,0,0],[1,1,1],[0,0,1],[1,1,1]],
+  '6':[[1,1,1],[1,0,0],[1,1,1],[1,0,1],[1,1,1]],
+  '7':[[1,1,1],[0,0,1],[0,1,0],[0,1,0],[0,1,0]],
+  '8':[[1,1,1],[1,0,1],[1,1,1],[1,0,1],[1,1,1]],
+  '9':[[1,1,1],[1,0,1],[1,1,1],[0,0,1],[1,1,1]],
+  'A':[[0,1,0],[1,0,1],[1,1,1],[1,0,1],[1,0,1]],
+  'B':[[1,1,0],[1,0,1],[1,1,0],[1,0,1],[1,1,0]],
+  'C':[[0,1,1],[1,0,0],[1,0,0],[1,0,0],[0,1,1]],
+  'D':[[1,1,0],[1,0,1],[1,0,1],[1,0,1],[1,1,0]],
+  'E':[[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,1,1]],
+  'F':[[1,1,1],[1,0,0],[1,1,0],[1,0,0],[1,0,0]],
+  'G':[[0,1,1],[1,0,0],[1,0,1],[1,0,1],[0,1,1]],
+  'H':[[1,0,1],[1,0,1],[1,1,1],[1,0,1],[1,0,1]],
+  'I':[[1,1,1],[0,1,0],[0,1,0],[0,1,0],[1,1,1]],
+  'J':[[0,0,1],[0,0,1],[0,0,1],[1,0,1],[1,1,1]],
+  'K':[[1,0,1],[1,0,1],[1,1,0],[1,0,1],[1,0,1]],
+  'L':[[1,0,0],[1,0,0],[1,0,0],[1,0,0],[1,1,1]],
+  'M':[[1,0,1],[1,1,1],[1,0,1],[1,0,1],[1,0,1]],
+  'N':[[1,0,1],[1,1,1],[1,1,1],[1,0,1],[1,0,1]],
+  'O':[[0,1,0],[1,0,1],[1,0,1],[1,0,1],[0,1,0]],
+  'P':[[1,1,0],[1,0,1],[1,1,0],[1,0,0],[1,0,0]],
+  'Q':[[0,1,0],[1,0,1],[1,0,1],[1,1,1],[0,1,1]],
+  'R':[[1,1,0],[1,0,1],[1,1,0],[1,0,1],[1,0,1]],
+  'S':[[0,1,1],[1,0,0],[0,1,0],[0,0,1],[1,1,0]],
+  'T':[[1,1,1],[0,1,0],[0,1,0],[0,1,0],[0,1,0]],
+  'U':[[1,0,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
+  'V':[[1,0,1],[1,0,1],[1,0,1],[1,0,1],[0,1,0]],
+  'W':[[1,0,1],[1,0,1],[1,0,1],[1,1,1],[1,0,1]],
+  'X':[[1,0,1],[1,0,1],[0,1,0],[1,0,1],[1,0,1]],
+  'Y':[[1,0,1],[1,0,1],[0,1,0],[0,1,0],[0,1,0]],
+  'Z':[[1,1,1],[0,0,1],[0,1,0],[1,0,0],[1,1,1]],
+  ' ':[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]],
+  '-':[[0,0,0],[0,0,0],[1,1,1],[0,0,0],[0,0,0]],
+  '/':[[0,0,1],[0,0,1],[0,1,0],[1,0,0],[1,0,0]],
+};
+
+const PX = 3;   // pixel block size for normal text — smaller
+const SPX = 16; // pixel block size for scores
+const GAP = 0;  // zero gap — fully solid pixels, no lines at all
+
+function charW(px) { return 3*px + 1; }  // 1px between chars — no visible lines
+function charH(px) { return 5*px; }
+
+function drawChar(ctx, ch, x, y, px, color) {
+  const grid = FONT[ch.toUpperCase()];
+  if (!grid) return;
+  ctx.fillStyle = color || '#fff';
+  for (let row = 0; row < 5; row++) {
+    for (let col = 0; col < 3; col++) {
+      if (grid[row][col]) {
+        ctx.fillRect(x + col*px, y + row*px, px, px);
+      }
+    }
+  }
+}
+
+function measureText(str, px) {
+  return str.length * charW(px) - GAP;
+}
+
+function drawText(ctx, str, x, y, px, color, align) {
+  str = str.toUpperCase();
+  const w = measureText(str, px);
+  let cx = x;
+  if (align === 'center') cx = x - w/2;
+  if (align === 'right')  cx = x - w;
+  for (const ch of str) {
+    drawChar(ctx, ch, cx, y, px, color);
+    cx += charW(px);
+  }
+}
+
+// ---- CANVASES ----
+const scoreCtx = document.getElementById('scoreCanvas').getContext('2d');
+const ctx      = document.getElementById('c').getContext('2d');
+const msgCtx   = document.getElementById('msgCanvas').getContext('2d');
+const hintCtx  = document.getElementById('hintCanvas').getContext('2d');
+const W=960, H=620, PW=12, PH=80, BS=10, PS=5, WIN=11;
+
+let state='idle', ls=0, rs=0;
+let lp={x:28, y:H/2-PH/2}, rp={x:W-28-PW, y:H/2-PH/2};
+let ball={x:W/2, y:H/2, vx:0, vy:0};
+let keys={};
+
+let cpuMode = true;
+let p2Timer = null;
+
+function resetP2Timer() {
+  if (p2Timer) clearTimeout(p2Timer);
+  p2Timer = setTimeout(() => { cpuMode = true; }, 5000);
+}
+
+document.addEventListener('keydown', e=>{
+  keys[e.key]=true;
+  if (e.key==='ArrowUp' || e.key==='ArrowDown') {
+    cpuMode = false;
+    resetP2Timer();
+  }
+  if (e.key===' ') {
+    e.preventDefault();
+    if (AC.state==='suspended') AC.resume();
+    if (state==='idle'||state==='win') start();
+  }
+});
+document.addEventListener('keyup', e=>{ keys[e.key]=false; });
+
+function start() {
+  if (state==='win') { ls=0; rs=0; }
+  lp.y = rp.y = H/2-PH/2;
+  serve(); state='playing'; setMsg('');
+}
+
+function serve() {
+  ball.x=W/2; ball.y=H/2;
+  const a=(Math.random()*60-30)*Math.PI/180;
+  const d=Math.random()<.5?1:-1;
+  ball.vx=6.5*Math.cos(a)*d; ball.vy=6.5*Math.sin(a);
+}
+
+function setMsg(t) {
+  msgCtx.clearRect(0,0,960,30);
+  if (t) drawText(msgCtx, t, 480, 6, PX, '#fff', 'center');
+}
+
+function setHint(t) {
+  hintCtx.clearRect(0,0,960,22);
+  if (t) drawText(hintCtx, t, 480, 4, PX, '#777', 'center');
+}
+
+function drawScores() {
+  scoreCtx.clearRect(0,0,960,90);
+  drawText(scoreCtx, String(ls), 320, 10, SPX, '#fff', 'right');
+  drawText(scoreCtx, String(rs), 640, 10, SPX, '#fff', 'left');
+}
+
+function update() {
+  if (state!=='playing') return;
+  // Player controls left paddle
+  if (keys['w']||keys['W']) lp.y-=PS;
+  if (keys['s']||keys['S']) lp.y+=PS;
+  lp.y=Math.max(0,Math.min(H-PH,lp.y));
+
+  // CPU controls right paddle — tracks ball with slight lag
+  if (cpuMode) {
+    const cpuCenter = rp.y + PH/2;
+    const cpuSpeed = 3.5;
+    if (cpuCenter < ball.y - 4) rp.y += cpuSpeed;
+    else if (cpuCenter > ball.y + 4) rp.y -= cpuSpeed;
+  } else {
+    if (keys['ArrowUp'])   rp.y -= PS;
+    if (keys['ArrowDown']) rp.y += PS;
+  }
+  rp.y=Math.max(0,Math.min(H-PH,rp.y));
+
+  ball.x+=ball.vx; ball.y+=ball.vy;
+
+  if (ball.y-BS/2<=0)  { ball.y=BS/2;    ball.vy=Math.abs(ball.vy);  soundWall(); }
+  if (ball.y+BS/2>=H)  { ball.y=H-BS/2;  ball.vy=-Math.abs(ball.vy); soundWall(); }
+
+  // left paddle
+  if (ball.vx<0 && ball.x-BS/2<=lp.x+PW && ball.x-BS/2>=lp.x && ball.y+BS/2>=lp.y && ball.y-BS/2<=lp.y+PH) {
+    ball.x=lp.x+PW+BS/2;
+    const spd=Math.min(Math.hypot(ball.vx,ball.vy)+.25,15);
+    const a=((ball.y-(lp.y+PH/2))/(PH/2))*60*Math.PI/180;
+    ball.vx=Math.abs(spd*Math.cos(a)); ball.vy=spd*Math.sin(a);
+    soundPaddle();
+  }
+  // right paddle
+  if (ball.vx>0 && ball.x+BS/2>=rp.x && ball.x+BS/2<=rp.x+PW && ball.y+BS/2>=rp.y && ball.y-BS/2<=rp.y+PH) {
+    ball.x=rp.x-BS/2;
+    const spd=Math.min(Math.hypot(ball.vx,ball.vy)+.25,15);
+    const a=((ball.y-(rp.y+PH/2))/(PH/2))*60*Math.PI/180;
+    ball.vx=-Math.abs(spd*Math.cos(a)); ball.vy=spd*Math.sin(a);
+    soundPaddle();
+  }
+
+  if (ball.x<0) { rs++; drawScores(); soundScore(); point(); }
+  if (ball.x>W) { ls++; drawScores(); soundScore(); point(); }
+}
+
+function point() {
+  if (ls>=WIN) { state='win'; setMsg('LEFT WINS - PRESS SPACE'); return; }
+  if (rs>=WIN) { state='win'; setMsg('RIGHT WINS - PRESS SPACE'); return; }
+  state='idle'; serve(); setTimeout(()=>{ state='playing'; }, 700);
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff';
+  for (let y=0; y<H; y+=20) ctx.fillRect(W/2-2,y,4,10);
+  ctx.fillRect(lp.x,lp.y,PW,PH);
+  ctx.fillRect(rp.x,rp.y,PW,PH);
+  ctx.fillRect(ball.x-BS/2,ball.y-BS/2,BS,BS);
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+// init
+drawScores();
+setMsg('PRESS SPACE TO START');
+setHint('W S MOVE LEFT    ARROW KEYS TAKE OVER RIGHT');
+loop();
+</script>
+</body>
+</html>
