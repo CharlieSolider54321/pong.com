@@ -2,43 +2,68 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>PONG</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
-body{
+html,body{
   background:#000;
-  color:#fff;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  height:100vh;
-  overflow:hidden;
-  user-select:none;
+  width:100%;height:100%;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  overflow:hidden;user-select:none;
 }
-#ui-top{margin-bottom:12px;display:flex;align-items:center;justify-content:center;}
-#ui-bottom{margin-top:12px;display:flex;flex-direction:column;align-items:center;gap:8px;}
+#root{
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:8px;
+}
 #wrap{border:3px solid #fff;line-height:0;}
 canvas{display:block;}
 </style>
 </head>
 <body>
-<div id="ui-top"><canvas id="scoreCanvas" width="960" height="90"></canvas></div>
-<div id="wrap"><canvas id="c" width="960" height="620"></canvas></div>
-<div id="ui-bottom">
-  <canvas id="msgCanvas" width="960" height="30"></canvas>
-  <canvas id="hintCanvas" width="960" height="22"></canvas>
+<div id="root">
+  <canvas id="scoreCanvas"></canvas>
+  <div id="wrap"><canvas id="c"></canvas></div>
+  <canvas id="msgCanvas"></canvas>
+  <canvas id="hintCanvas"></canvas>
 </div>
 
 <script>
+// ---- RESPONSIVE SCALE ----
+const BASE_W = 960, BASE_H = 620;
+let SCALE = 1;
+
+function resize() {
+  const maxW = window.innerWidth  - 20;
+  const maxH = window.innerHeight - 120; // leave room for score + text
+  SCALE = Math.min(maxW / BASE_W, maxH / BASE_H, 1);
+
+  const cw = Math.floor(BASE_W * SCALE);
+  const ch = Math.floor(BASE_H * SCALE);
+
+  gameCanvas.width  = cw;
+  gameCanvas.height = ch;
+  scoreCanvas.width = cw;
+  scoreCanvas.height= Math.floor(90 * SCALE);
+  msgCanvas.width   = cw;
+  msgCanvas.height  = Math.floor(30 * SCALE);
+  hintCanvas.width  = cw;
+  hintCanvas.height = Math.floor(22 * SCALE);
+
+  drawScores();
+  setMsg(currentMsg);
+  setHint('W S MOVE LEFT    ARROW KEYS TAKE OVER RIGHT');
+}
+
 // ---- AUDIO ----
 const AC = new (window.AudioContext || window.webkitAudioContext)();
 
 function beep(freq, dur, type='square', vol=0.3) {
-  const osc = AC.createOscillator();
+  const osc  = AC.createOscillator();
   const gain = AC.createGain();
-  osc.connect(gain);
-  gain.connect(AC.destination);
+  osc.connect(gain); gain.connect(AC.destination);
   osc.type = type;
   osc.frequency.setValueAtTime(freq, AC.currentTime);
   gain.gain.setValueAtTime(vol, AC.currentTime);
@@ -52,7 +77,6 @@ function soundWall()   { beep(240, 0.04); }
 function soundScore()  { beep(110, 0.4, 'square', 0.4); }
 
 // ---- 5x3 PIXEL FONT ----
-// Each char: 5 rows x 3 cols bitmap
 const FONT = {
   '0':[[1,1,1],[1,0,1],[1,0,1],[1,0,1],[1,1,1]],
   '1':[[0,1,0],[1,1,0],[0,1,0],[0,1,0],[1,1,1]],
@@ -95,29 +119,19 @@ const FONT = {
   '/':[[0,0,1],[0,0,1],[0,1,0],[1,0,0],[1,0,0]],
 };
 
-const PX = 3;   // pixel block size for normal text — smaller
-const SPX = 16; // pixel block size for scores
-const GAP = 0;  // zero gap — fully solid pixels, no lines at all
-
-function charW(px) { return 3*px + 1; }  // 1px between chars — no visible lines
-function charH(px) { return 5*px; }
+function charW(px) { return 3*px + 1; }
 
 function drawChar(ctx, ch, x, y, px, color) {
   const grid = FONT[ch.toUpperCase()];
   if (!grid) return;
   ctx.fillStyle = color || '#fff';
-  for (let row = 0; row < 5; row++) {
-    for (let col = 0; col < 3; col++) {
-      if (grid[row][col]) {
+  for (let row = 0; row < 5; row++)
+    for (let col = 0; col < 3; col++)
+      if (grid[row][col])
         ctx.fillRect(x + col*px, y + row*px, px, px);
-      }
-    }
-  }
 }
 
-function measureText(str, px) {
-  return str.length * charW(px) - GAP;
-}
+function measureText(str, px) { return str.length * charW(px); }
 
 function drawText(ctx, str, x, y, px, color, align) {
   str = str.toUpperCase();
@@ -125,83 +139,96 @@ function drawText(ctx, str, x, y, px, color, align) {
   let cx = x;
   if (align === 'center') cx = x - w/2;
   if (align === 'right')  cx = x - w;
-  for (const ch of str) {
-    drawChar(ctx, ch, cx, y, px, color);
-    cx += charW(px);
-  }
+  for (const ch of str) { drawChar(ctx, ch, cx, y, px, color); cx += charW(px); }
 }
 
-// ---- CANVASES ----
-const scoreCtx = document.getElementById('scoreCanvas').getContext('2d');
-const ctx      = document.getElementById('c').getContext('2d');
-const msgCtx   = document.getElementById('msgCanvas').getContext('2d');
-const hintCtx  = document.getElementById('hintCanvas').getContext('2d');
-const W=960, H=620, PW=12, PH=80, BS=10, PS=5, WIN=11;
+// ---- CANVAS REFS ----
+const scoreCanvas = document.getElementById('scoreCanvas');
+const gameCanvas  = document.getElementById('c');
+const msgCanvas   = document.getElementById('msgCanvas');
+const hintCanvas  = document.getElementById('hintCanvas');
+const scoreCtx    = scoreCanvas.getContext('2d');
+const ctx         = gameCanvas.getContext('2d');
+const msgCtx      = msgCanvas.getContext('2d');
+const hintCtx     = hintCanvas.getContext('2d');
+
+// ---- GAME CONSTANTS (logical units) ----
+const W=BASE_W, H=BASE_H;
+const PW=12, PH=80, BS=10, PS=5, WIN=11;
 
 let state='idle', ls=0, rs=0;
+let currentMsg = 'PRESS SPACE TO START';
 let lp={x:28, y:H/2-PH/2}, rp={x:W-28-PW, y:H/2-PH/2};
 let ball={x:W/2, y:H/2, vx:0, vy:0};
 let keys={};
-
-let cpuMode = true;
-let p2Timer = null;
+let cpuMode=true, p2Timer=null;
 
 function resetP2Timer() {
   if (p2Timer) clearTimeout(p2Timer);
   p2Timer = setTimeout(() => { cpuMode = true; }, 5000);
 }
 
-document.addEventListener('keydown', e=>{
-  keys[e.key]=true;
-  if (e.key==='ArrowUp' || e.key==='ArrowDown') {
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
     cpuMode = false;
     resetP2Timer();
   }
-  if (e.key===' ') {
+  if (e.key === 'Escape') {
+    if (state === 'playing') { state = 'paused'; setMsg('PAUSED - ESC TO RESUME'); }
+    else if (state === 'paused') { state = 'playing'; setMsg(''); }
+  }
+  if (e.key === ' ') {
     e.preventDefault();
-    if (AC.state==='suspended') AC.resume();
-    if (state==='idle'||state==='win') start();
+    if (AC.state === 'suspended') AC.resume();
+    if (state === 'idle' || state === 'win') start();
   }
 });
-document.addEventListener('keyup', e=>{ keys[e.key]=false; });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
 
 function start() {
-  if (state==='win') { ls=0; rs=0; }
-  lp.y = rp.y = H/2-PH/2;
-  serve(); state='playing'; setMsg('');
+  if (state === 'win') { ls = 0; rs = 0; }
+  lp.y = rp.y = H/2 - PH/2;
+  serve(); state = 'playing'; setMsg('');
 }
 
 function serve() {
-  ball.x=W/2; ball.y=H/2;
-  const a=(Math.random()*60-30)*Math.PI/180;
-  const d=Math.random()<.5?1:-1;
-  ball.vx=6.5*Math.cos(a)*d; ball.vy=6.5*Math.sin(a);
+  ball.x = W/2; ball.y = H/2;
+  const a = (Math.random()*60 - 30) * Math.PI/180;
+  const d = Math.random() < .5 ? 1 : -1;
+  ball.vx = 6.5*Math.cos(a)*d;
+  ball.vy = 6.5*Math.sin(a);
 }
 
 function setMsg(t) {
-  msgCtx.clearRect(0,0,960,30);
-  if (t) drawText(msgCtx, t, 480, 6, PX, '#fff', 'center');
+  currentMsg = t;
+  const PX = Math.max(2, Math.floor(3 * SCALE));
+  const SPX = Math.max(2, Math.floor(3 * SCALE));
+  msgCtx.clearRect(0, 0, msgCanvas.width, msgCanvas.height);
+  if (t) drawText(msgCtx, t, msgCanvas.width/2, Math.floor(6*SCALE), PX, '#fff', 'center');
 }
 
 function setHint(t) {
-  hintCtx.clearRect(0,0,960,22);
-  if (t) drawText(hintCtx, t, 480, 4, PX, '#777', 'center');
+  const PX = Math.max(2, Math.floor(3 * SCALE));
+  hintCtx.clearRect(0, 0, hintCanvas.width, hintCanvas.height);
+  if (t) drawText(hintCtx, t, hintCanvas.width/2, Math.floor(4*SCALE), PX, '#777', 'center');
 }
 
 function drawScores() {
-  scoreCtx.clearRect(0,0,960,90);
-  drawText(scoreCtx, String(ls), 320, 10, SPX, '#fff', 'right');
-  drawText(scoreCtx, String(rs), 640, 10, SPX, '#fff', 'left');
+  const SPX = Math.max(4, Math.floor(16 * SCALE));
+  scoreCtx.clearRect(0, 0, scoreCanvas.width, scoreCanvas.height);
+  const cy = Math.floor(10 * SCALE);
+  drawText(scoreCtx, String(ls), Math.floor(scoreCanvas.width*0.33), cy, SPX, '#fff', 'right');
+  drawText(scoreCtx, String(rs), Math.floor(scoreCanvas.width*0.67), cy, SPX, '#fff', 'left');
 }
 
 function update() {
-  if (state!=='playing') return;
-  // Player controls left paddle
-  if (keys['w']||keys['W']) lp.y-=PS;
-  if (keys['s']||keys['S']) lp.y+=PS;
-  lp.y=Math.max(0,Math.min(H-PH,lp.y));
+  if (state !== 'playing') return;
 
-  // CPU controls right paddle — tracks ball with slight lag
+  if (keys['w'] || keys['W']) lp.y -= PS;
+  if (keys['s'] || keys['S']) lp.y += PS;
+  lp.y = Math.max(0, Math.min(H-PH, lp.y));
+
   if (cpuMode) {
     const cpuCenter = rp.y + PH/2;
     const cpuSpeed = 3.5;
@@ -211,53 +238,61 @@ function update() {
     if (keys['ArrowUp'])   rp.y -= PS;
     if (keys['ArrowDown']) rp.y += PS;
   }
-  rp.y=Math.max(0,Math.min(H-PH,rp.y));
+  rp.y = Math.max(0, Math.min(H-PH, rp.y));
 
-  ball.x+=ball.vx; ball.y+=ball.vy;
+  ball.x += ball.vx; ball.y += ball.vy;
 
-  if (ball.y-BS/2<=0)  { ball.y=BS/2;    ball.vy=Math.abs(ball.vy);  soundWall(); }
-  if (ball.y+BS/2>=H)  { ball.y=H-BS/2;  ball.vy=-Math.abs(ball.vy); soundWall(); }
+  if (ball.y - BS/2 <= 0) { ball.y = BS/2;   ball.vy =  Math.abs(ball.vy); soundWall(); }
+  if (ball.y + BS/2 >= H) { ball.y = H-BS/2; ball.vy = -Math.abs(ball.vy); soundWall(); }
 
   // left paddle
   if (ball.vx<0 && ball.x-BS/2<=lp.x+PW && ball.x-BS/2>=lp.x && ball.y+BS/2>=lp.y && ball.y-BS/2<=lp.y+PH) {
-    ball.x=lp.x+PW+BS/2;
-    const spd=Math.min(Math.hypot(ball.vx,ball.vy)+.25,15);
-    const a=((ball.y-(lp.y+PH/2))/(PH/2))*60*Math.PI/180;
-    ball.vx=Math.abs(spd*Math.cos(a)); ball.vy=spd*Math.sin(a);
+    ball.x = lp.x+PW+BS/2;
+    const spd = Math.min(Math.hypot(ball.vx,ball.vy)+.25, 15);
+    const a   = ((ball.y-(lp.y+PH/2))/(PH/2))*60*Math.PI/180;
+    ball.vx = Math.abs(spd*Math.cos(a)); ball.vy = spd*Math.sin(a);
     soundPaddle();
   }
   // right paddle
   if (ball.vx>0 && ball.x+BS/2>=rp.x && ball.x+BS/2<=rp.x+PW && ball.y+BS/2>=rp.y && ball.y-BS/2<=rp.y+PH) {
-    ball.x=rp.x-BS/2;
-    const spd=Math.min(Math.hypot(ball.vx,ball.vy)+.25,15);
-    const a=((ball.y-(rp.y+PH/2))/(PH/2))*60*Math.PI/180;
-    ball.vx=-Math.abs(spd*Math.cos(a)); ball.vy=spd*Math.sin(a);
+    ball.x = rp.x-BS/2;
+    const spd = Math.min(Math.hypot(ball.vx,ball.vy)+.25, 15);
+    const a   = ((ball.y-(rp.y+PH/2))/(PH/2))*60*Math.PI/180;
+    ball.vx = -Math.abs(spd*Math.cos(a)); ball.vy = spd*Math.sin(a);
     soundPaddle();
   }
 
-  if (ball.x<0) { rs++; drawScores(); soundScore(); point(); }
-  if (ball.x>W) { ls++; drawScores(); soundScore(); point(); }
+  if (ball.x < 0) { rs++; drawScores(); soundScore(); point(); }
+  if (ball.x > W) { ls++; drawScores(); soundScore(); point(); }
 }
 
 function point() {
-  if (ls>=WIN) { state='win'; setMsg('LEFT WINS - PRESS SPACE'); return; }
-  if (rs>=WIN) { state='win'; setMsg('RIGHT WINS - PRESS SPACE'); return; }
-  state='idle'; serve(); setTimeout(()=>{ state='playing'; }, 700);
+  if (ls >= WIN) { state='win'; setMsg('LEFT WINS - PRESS SPACE'); return; }
+  if (rs >= WIN) { state='win'; setMsg('RIGHT WINS - PRESS SPACE'); return; }
+  state='idle'; serve(); setTimeout(() => { state='playing'; }, 700);
 }
 
 function draw() {
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#fff';
-  for (let y=0; y<H; y+=20) ctx.fillRect(W/2-2,y,4,10);
-  ctx.fillRect(lp.x,lp.y,PW,PH);
-  ctx.fillRect(rp.x,rp.y,PW,PH);
-  ctx.fillRect(ball.x-BS/2,ball.y-BS/2,BS,BS);
+  const s = SCALE;
+  ctx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+  ctx.fillStyle = '#fff';
+
+  // center dashes
+  for (let y=0; y<H; y+=20)
+    ctx.fillRect((W/2-2)*s, y*s, 4*s, 10*s);
+
+  // paddles
+  ctx.fillRect(lp.x*s, lp.y*s, PW*s, PH*s);
+  ctx.fillRect(rp.x*s, rp.y*s, PW*s, PH*s);
+
+  // ball
+  ctx.fillRect((ball.x-BS/2)*s, (ball.y-BS/2)*s, BS*s, BS*s);
 }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 
-// init
-drawScores();
+window.addEventListener('resize', resize);
+resize();
 setMsg('PRESS SPACE TO START');
 setHint('W S MOVE LEFT    ARROW KEYS TAKE OVER RIGHT');
 loop();
